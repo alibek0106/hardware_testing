@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Generated build output
+dist/
+build/
+out/
+coverage/
+
+# Playwright output
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+
+# Generated OPC UA files
+.pki/
+pki/
+certificates/
+node-opcua-pki/
+
+# Package-manager generated files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# Minified and generated assets
+*.min.js
+*.min.css
+*.map
+
+# Test-generated downloads
+downloads/
