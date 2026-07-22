@@ -61,3 +61,8 @@ downloads/
 
 # TypeScript incremental output
 *.tsbuildinfo
+
+.pki/
+pki/
+certificates/
+node-opcua-pki/

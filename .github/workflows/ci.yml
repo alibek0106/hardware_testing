@@ -1,8 +1,13 @@
 name: CI
+run-name: CI · ${{ github.event_name }} · ${{ github.ref_name }}
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -23,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -44,43 +49,6 @@ jobs:
       - name: Run TypeScript validation
         run: npm run typecheck
 
-  api-tests:
-    name: Playwright API tests
-    needs: quality
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-
-    env:
-      DEVICE_API_BASE_URL: https://api.restful-api.dev
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run Playwright API tests
-        run: npm run test:api
-
-      - name: Upload API test artifacts
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-api-report-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: ignore
-          retention-days: 14
-
   ui-tests:
     name: Playwright UI tests
     needs: quality
@@ -92,7 +60,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -120,3 +88,101 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  api-tests:
+    name: Playwright API tests
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    env:
+      DEVICE_API_BASE_URL: https://api.restful-api.dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Playwright API tests
+        run: npm run test:api
+
+      - name: Upload API test artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-api-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  opcua-tests:
+    name: Playwright OPC UA tests
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    env:
+      OPC_UA_ENDPOINT: opc.tcp://localhost:50000
+      OPC_UA_INVALID_ENDPOINT: opc.tcp://127.0.0.1:1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pull OPC UA simulator
+        run: docker compose pull opcplc
+
+      - name: Start OPC UA simulator
+        run: npm run opcua:start
+
+      - name: Wait for OPC UA simulator
+        run: npm run opcua:wait
+
+      - name: Show simulator status
+        run: docker compose ps
+
+      - name: Run Playwright OPC UA tests
+        run: npm run test:opcua
+
+      - name: Save OPC UA simulator logs
+        if: ${{ always() }}
+        run: |
+          mkdir -p test-results/opcua-simulator
+          docker compose logs --no-color opcplc \
+            > test-results/opcua-simulator/opcplc.log 2>&1 || true
+
+      - name: Upload OPC UA test artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-opcua-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Stop OPC UA simulator
+        if: ${{ always() }}
+        run: npm run opcua:stop

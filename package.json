@@ -14,7 +14,11 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "format": "prettier . --write",
-    "format:check": "prettier . --check"
+    "format:check": "prettier . --check",
+    "opcua:start": "docker compose up -d opcplc",
+    "opcua:wait": "node scripts/wait-for-opcua.mjs",
+    "opcua:logs": "docker compose logs opcplc",
+    "opcua:stop": "docker compose down --remove-orphans"
   },
   "repository": {
     "type": "git",

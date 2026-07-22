@@ -1,0 +1,18 @@
+services:
+  opcplc:
+    image: mcr.microsoft.com/iotedge/opc-plc:2.12.48
+    container_name: opcplc
+    command:
+      - --pn=50000
+      - --autoaccept
+      - --unsecuretransport
+      - --sn=5
+      - --sr=10
+      - --st=uint
+      - --fn=5
+      - --fr=1
+      - --ft=uint
+      - --gn=5
+    ports:
+      - '50000:50000'
+      - '8080:8080'
