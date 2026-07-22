@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -44,6 +44,43 @@ jobs:
       - name: Run TypeScript validation
         run: npm run typecheck
 
+  api-tests:
+    name: Playwright API tests
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    env:
+      DEVICE_API_BASE_URL: https://api.restful-api.dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Playwright API tests
+        run: npm run test:api
+
+      - name: Upload API test artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-api-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   ui-tests:
     name: Playwright UI tests
     needs: quality
@@ -55,7 +92,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -73,7 +110,7 @@ jobs:
       - name: Run Playwright UI tests
         run: npm run test:ui
 
-      - name: Upload Playwright artifacts
+      - name: Upload UI test artifacts
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
