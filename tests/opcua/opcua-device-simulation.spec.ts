@@ -21,6 +21,16 @@ const requireNode = (
   return node;
 };
 
+const requireNumber = (value: unknown, message: string): number => {
+  expect(typeof value, message).toBe('number');
+
+  if (typeof value !== 'number') {
+    throw new Error(message);
+  }
+
+  return value;
+};
+
 const discoverFastNode = async (
   client: OpcUaClient,
   testInfo?: TestInfo,
@@ -166,13 +176,13 @@ test.describe('OPC UA device simulation', () => {
 
     expect(initialRead.isGood).toBe(true);
     expect(initialRead.dataType).toBe(opcUaTestConfig.writableNodeDataType);
-    expect(typeof initialRead.value).toBe('number');
 
-    if (typeof initialRead.value !== 'number') {
-      throw new Error('The writable OPC UA node did not contain a numeric value');
-    }
+    const initialValue = requireNumber(
+      initialRead.value,
+      'The writable OPC UA node did not contain a numeric value',
+    );
 
-    const writtenValue = (initialRead.value + 1) % 4_294_967_296;
+    const writtenValue = (initialValue + 1) % 4_294_967_296;
 
     try {
       const writeResult = await opcUaClient.writeNode(
@@ -192,7 +202,7 @@ test.describe('OPC UA device simulation', () => {
     } finally {
       await opcUaClient.writeNode(
         writableNode.nodeId,
-        initialRead.value,
+        initialValue,
         opcUaTestConfig.writableNodeDataType,
       );
     }
