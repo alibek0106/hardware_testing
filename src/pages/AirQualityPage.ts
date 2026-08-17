@@ -55,7 +55,7 @@ export class AirQualityPage {
       }
 
       this.capturedBaselineAqi = message.aqi;
-      message.xsync.gen += 1;
+      message.xsync.gen = Math.floor(Date.now() / 1000) + 300;
 
       await route.fulfill({
         response,
@@ -85,7 +85,7 @@ export class AirQualityPage {
       }
 
       message.aqi = aqi;
-      message.xsync.gen += 1;
+      message.xsync.gen = Math.floor(Date.now() / 1000) + 300;
 
       await route.fulfill({
         response,

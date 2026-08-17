@@ -25,6 +25,9 @@ import type {
   OpcUaClientState,
   OpcUaDataChange,
   OpcUaReadResult,
+  OpcUaWriteDataType,
+  OpcUaWriteResult,
+  OpcUaWriteValue,
 } from '../types/opcua.types';
 
 interface BrowseQueueEntry {
@@ -32,6 +35,15 @@ interface BrowseQueueEntry {
   readonly depth: number;
   readonly path: readonly string[];
 }
+
+const writeDataTypes: Record<OpcUaWriteDataType, DataType> = {
+  Boolean: DataType.Boolean,
+  Int32: DataType.Int32,
+  UInt32: DataType.UInt32,
+  Float: DataType.Float,
+  Double: DataType.Double,
+  String: DataType.String,
+};
 
 export class OpcUaClient {
   private client: OPCUAClient | undefined;
@@ -167,6 +179,37 @@ export class OpcUaClient {
     });
 
     return this.createReadResult(nodeId, dataValue, 'read');
+  }
+
+  public async writeNode(
+    nodeId: string,
+    value: OpcUaWriteValue,
+    dataType: OpcUaWriteDataType,
+  ): Promise<OpcUaWriteResult> {
+    const session = this.requireSession('write');
+
+    const result = await session.write({
+      nodeId,
+      attributeId: AttributeIds.Value,
+      value: {
+        value: {
+          dataType: writeDataTypes[dataType],
+          value,
+        },
+      },
+    });
+
+    const statusCode = result.toString();
+
+    if (!result.isGood()) {
+      throw new OpcUaOperationError('write', nodeId, statusCode);
+    }
+
+    return {
+      nodeId,
+      statusCode,
+      isGood: true,
+    };
   }
 
   public async subscribeToNode(nodeId: string, timeoutMs: number): Promise<OpcUaDataChange> {

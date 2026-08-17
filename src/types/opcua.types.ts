@@ -26,3 +26,13 @@ export interface OpcUaReadResult {
 export interface OpcUaDataChange extends OpcUaReadResult {
   readonly receivedAt: Date;
 }
+
+export type OpcUaWriteDataType = 'Boolean' | 'Int32' | 'UInt32' | 'Float' | 'Double' | 'String';
+
+export type OpcUaWriteValue = boolean | number | string;
+
+export interface OpcUaWriteResult {
+  readonly nodeId: string;
+  readonly statusCode: string;
+  readonly isGood: boolean;
+}

@@ -13,6 +13,9 @@ services:
       - --fr=1
       - --ft=uint
       - --gn=5
+      - --nodesfile=/app/nodesfile.json
+    volumes:
+      - ./docker/opcplc-nodes.json:/app/nodesfile.json:ro
     ports:
       - '50000:50000'
       - '8080:8080'

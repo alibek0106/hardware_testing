@@ -8,4 +8,7 @@ export const opcUaTestConfig = {
   simulationRootBrowseName: 'OpcPlc',
   fastNodeNamePattern: /^FastUInt\d+$/i,
   relevantNodeNamePattern: /^(?:Bad)?(?:Fast|Slow)UInt\d+$/i,
+  writableNodeFolderBrowseName: 'HardwareTesting',
+  writableNodeBrowseName: 'HardwareCommandValue',
+  writableNodeDataType: 'UInt32',
 } as const;

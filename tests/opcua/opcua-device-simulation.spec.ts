@@ -59,6 +59,32 @@ const discoverFastNode = async (
   );
 };
 
+const discoverWritableNode = async (
+  client: OpcUaClient,
+  testInfo?: TestInfo,
+): Promise<OpcUaBrowseNode> => {
+  const discoveredNodes = await client.browseRecursively(
+    'RootFolder',
+    opcUaTestConfig.browseMaxDepth,
+  );
+
+  const writableNode = requireNode(
+    discoveredNodes,
+    (node) =>
+      node.nodeClass === 'Variable' && node.browseName === opcUaTestConfig.writableNodeBrowseName,
+    'The HardwareCommandValue writable node was not found',
+  );
+
+  if (testInfo !== undefined) {
+    await testInfo.attach('opc-ua-writable-node', {
+      body: Buffer.from(JSON.stringify(writableNode, null, 2)),
+      contentType: 'application/json',
+    });
+  }
+
+  return writableNode;
+};
+
 test.describe('OPC UA device simulation', () => {
   test('browses and reads a live changing numeric value', async ({ opcUaClient }, testInfo) => {
     await opcUaClient.connect();
@@ -128,5 +154,47 @@ test.describe('OPC UA device simulation', () => {
     expect(invalidClient.connectionState).toBe('disconnected');
 
     await expect(invalidClient.disconnect()).resolves.toBeUndefined();
+  });
+
+  test('writes a hardware command and reads the applied value back', async ({
+    opcUaClient,
+  }, testInfo) => {
+    await opcUaClient.connect();
+
+    const writableNode = await discoverWritableNode(opcUaClient, testInfo);
+    const initialRead = await opcUaClient.readNode(writableNode.nodeId);
+
+    expect(initialRead.isGood).toBe(true);
+    expect(initialRead.dataType).toBe(opcUaTestConfig.writableNodeDataType);
+    expect(typeof initialRead.value).toBe('number');
+
+    if (typeof initialRead.value !== 'number') {
+      throw new Error('The writable OPC UA node did not contain a numeric value');
+    }
+
+    const writtenValue = (initialRead.value + 1) % 4_294_967_296;
+
+    try {
+      const writeResult = await opcUaClient.writeNode(
+        writableNode.nodeId,
+        writtenValue,
+        opcUaTestConfig.writableNodeDataType,
+      );
+
+      expect(writeResult.isGood).toBe(true);
+      expect(writeResult.statusCode).toBe('Good (0x00000000)');
+
+      const readBack = await opcUaClient.readNode(writableNode.nodeId);
+
+      expect(readBack.isGood).toBe(true);
+      expect(readBack.dataType).toBe(opcUaTestConfig.writableNodeDataType);
+      expect(readBack.value).toBe(writtenValue);
+    } finally {
+      await opcUaClient.writeNode(
+        writableNode.nodeId,
+        initialRead.value,
+        opcUaTestConfig.writableNodeDataType,
+      );
+    }
   });
 });
