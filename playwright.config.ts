@@ -29,10 +29,24 @@ export default defineConfig({
     {
       name: 'ui-chromium',
       testDir: './tests/ui',
-      testMatch: '**/*.spec.ts',
+      testMatch: '**/weather-hardware-state.spec.ts',
       use: {
         ...devices['Desktop Chrome'],
         baseURL: process.env.WEATHER_BASE_URL ?? 'https://openweathermap.org',
+        serviceWorkers: 'block',
+        screenshot: 'only-on-failure',
+        video: 'retain-on-failure',
+        actionTimeout: 10_000,
+        navigationTimeout: 30_000,
+      },
+    },
+    {
+      name: 'ui-aqicn',
+      testDir: './tests/ui',
+      testMatch: '**/air-quality-hardware-state.spec.ts',
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: process.env.AQI_BASE_URL ?? 'https://aqicn.org',
         serviceWorkers: 'block',
         screenshot: 'only-on-failure',
         video: 'retain-on-failure',
