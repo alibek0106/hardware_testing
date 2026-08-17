@@ -64,7 +64,7 @@ export class AirQualityPage {
     });
   }
 
-  public async mockOutOfRangeAqi(aqi: number): Promise<void> {
+  public async mockAqi(aqi: number): Promise<void> {
     await this.resetTelemetryRoute();
 
     await this.routeCurrentAqi(async (route) => {
@@ -92,6 +92,10 @@ export class AirQualityPage {
         json: feedResponse,
       });
     });
+  }
+
+  public async mockOutOfRangeAqi(aqi: number): Promise<void> {
+    await this.mockAqi(aqi);
   }
 
   public async mockFailedTelemetry(status: number): Promise<void> {

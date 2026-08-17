@@ -72,5 +72,20 @@ export default defineConfig({
         trace: 'off',
       },
     },
+    {
+      name: 'integration',
+      testDir: './tests/integration',
+      testMatch: '**/*.spec.ts',
+      timeout: 60_000,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: process.env.AQI_BASE_URL ?? 'https://aqicn.org',
+        serviceWorkers: 'block',
+        screenshot: 'only-on-failure',
+        video: 'retain-on-failure',
+        actionTimeout: 10_000,
+        navigationTimeout: 30_000,
+      },
+    },
   ],
 });

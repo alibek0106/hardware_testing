@@ -19,7 +19,8 @@
     "opcua:start": "docker compose up -d opcplc",
     "opcua:wait": "node scripts/wait-for-opcua.mjs",
     "opcua:logs": "docker compose logs opcplc",
-    "opcua:stop": "docker compose down --remove-orphans"
+    "opcua:stop": "docker compose down --remove-orphans",
+    "test:integration": "playwright test --project=integration"
   },
   "repository": {
     "type": "git",

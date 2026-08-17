@@ -12,6 +12,7 @@ export interface DeviceData {
   readonly sensor_type: string;
   readonly firmware: string;
   readonly status: DeviceStatus;
+  readonly lastReading?: number;
 }
 
 export interface DeviceResource {

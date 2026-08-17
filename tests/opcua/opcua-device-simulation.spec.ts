@@ -2,6 +2,7 @@ import type { TestInfo } from '@playwright/test';
 import { opcUaTestConfig } from '../../src/config/opcua-test.config';
 import { OpcUaClientStateError, OpcUaConnectionError } from '../../src/errors/OpcUaClientError';
 import { OpcUaClient } from '../../src/opcua/OpcUaClient';
+import { discoverFastTelemetryNode } from '../../src/opcua/OpcUaNodeDiscovery';
 import type { OpcUaBrowseNode } from '../../src/types/opcua.types';
 import { expect, test } from '../fixtures/opcua.fixture';
 
@@ -35,38 +36,16 @@ const discoverFastNode = async (
   client: OpcUaClient,
   testInfo?: TestInfo,
 ): Promise<OpcUaBrowseNode> => {
-  const objectNodes = await client.browse('ObjectsFolder');
-
-  const simulationRoot = requireNode(
-    objectNodes,
-    (node) =>
-      node.browseName === opcUaTestConfig.simulationRootBrowseName ||
-      node.displayName === opcUaTestConfig.simulationRootBrowseName,
-    'The OpcPlc simulation root was not found',
-  );
-
-  const discoveredNodes = await client.browseRecursively(
-    simulationRoot.nodeId,
-    opcUaTestConfig.browseMaxDepth,
-  );
-
-  const relevantNodes = discoveredNodes.filter((node) =>
-    opcUaTestConfig.relevantNodeNamePattern.test(node.browseName),
-  );
+  const discovery = await discoverFastTelemetryNode(client);
 
   if (testInfo !== undefined) {
     await testInfo.attach('opc-ua-discovered-nodes', {
-      body: Buffer.from(JSON.stringify(relevantNodes, null, 2)),
+      body: Buffer.from(JSON.stringify(discovery.relevantNodes, null, 2)),
       contentType: 'application/json',
     });
   }
 
-  return requireNode(
-    relevantNodes,
-    (node) =>
-      node.nodeClass === 'Variable' && opcUaTestConfig.fastNodeNamePattern.test(node.browseName),
-    'A changing Fast OPC UA variable was not found',
-  );
+  return discovery.node;
 };
 
 const discoverWritableNode = async (

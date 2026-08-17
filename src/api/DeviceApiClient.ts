@@ -36,7 +36,9 @@ const parseDeviceResource = (body: unknown): DeviceResource => {
     typeof data.model !== 'string' ||
     typeof data.sensor_type !== 'string' ||
     typeof data.firmware !== 'string' ||
-    !isDeviceStatus(data.status)
+    !isDeviceStatus(data.status) ||
+    (data.lastReading !== undefined &&
+      (typeof data.lastReading !== 'number' || !Number.isFinite(data.lastReading)))
   ) {
     throw new ApiResponseValidationError('The device response has an unexpected structure', body);
   }
@@ -49,6 +51,7 @@ const parseDeviceResource = (body: unknown): DeviceResource => {
       sensor_type: data.sensor_type,
       firmware: data.firmware,
       status: data.status,
+      ...(typeof data.lastReading === 'number' ? { lastReading: data.lastReading } : {}),
     },
     ...(typeof body.createdAt === 'string' ? { createdAt: body.createdAt } : {}),
     ...(typeof body.updatedAt === 'string' ? { updatedAt: body.updatedAt } : {}),
@@ -72,6 +75,35 @@ export class DeviceApiClient extends BaseApiClient {
 
   public constructor(request: APIRequestContext) {
     super(request);
+  }
+
+  public async recordTelemetry(
+    deviceId: string,
+    lastReading: number,
+  ): Promise<DeviceOperationResult> {
+    const current = await this.retrieveDevice(deviceId);
+
+    const updatedData: DeviceData = {
+      ...current.device.data,
+      lastReading,
+    };
+
+    const result = await this.patch(
+      this.getDevicePath(deviceId),
+      {
+        data: updatedData,
+      },
+      [200],
+    );
+
+    const updatedDevice = parseDeviceResource(result.body);
+
+    this.trackedDevices.set(deviceId, updatedDevice);
+
+    return {
+      status: 200,
+      device: updatedDevice,
+    };
   }
 
   public async provisionDevice(input: ProvisionDeviceInput): Promise<DeviceOperationResult> {
