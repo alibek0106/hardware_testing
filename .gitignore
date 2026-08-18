@@ -1,10 +1,68 @@
+# Dependencies
 node_modules/
+
+# Build output
+dist/
+build/
+out/
+coverage/
+
+# Playwright output
 playwright-report/
 test-results/
 blob-report/
-coverage/
-.env
+playwright/.cache/
+
+# Runtime files
 *.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# OPC UA certificates and generated PKI data
 .pki/
 pki/
 certificates/
+node-opcua-pki/
+
+# Temporary files
+tmp/
+temp/
+.cache/
+*.tmp
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Keep shared VS Code project configuration
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Test-generated downloads
+downloads/
+
+# TypeScript incremental output
+*.tsbuildinfo
+
+.pki/
+pki/
+certificates/
+node-opcua-pki/
