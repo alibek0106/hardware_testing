@@ -7,11 +7,13 @@ import {
   MessageSecurityMode,
   MonitoringMode,
   NodeClass,
+  OPCUACertificateManager,
   OPCUAClient,
   SecurityPolicy,
   TimestampsToReturn,
 } from 'node-opcua';
 import {
+  OpcUaCertificateTrustError,
   OpcUaClientStateError,
   OpcUaConnectionError,
   OpcUaDisconnectError,
@@ -25,6 +27,9 @@ import type {
   OpcUaClientState,
   OpcUaDataChange,
   OpcUaReadResult,
+  OpcUaSecurityMode,
+  OpcUaSecurityOptions,
+  OpcUaSecurityPolicy,
   OpcUaWriteDataType,
   OpcUaWriteResult,
   OpcUaWriteValue,
@@ -45,9 +50,48 @@ const writeDataTypes: Record<OpcUaWriteDataType, DataType> = {
   String: DataType.String,
 };
 
+const securityModes: Record<OpcUaSecurityMode, MessageSecurityMode> = {
+  None: MessageSecurityMode.None,
+  Sign: MessageSecurityMode.Sign,
+  SignAndEncrypt: MessageSecurityMode.SignAndEncrypt,
+};
+
+const securityPolicies: Record<OpcUaSecurityPolicy, SecurityPolicy> = {
+  None: SecurityPolicy.None,
+  Basic256Sha256: SecurityPolicy.Basic256Sha256,
+};
+
+const isCertificateTrustFailure = (cause: unknown): boolean => {
+  const message = cause instanceof Error ? cause.message : String(cause);
+
+  return /Certificate verification failed|BadCertificate|BadSecurityChecksFailed/i.test(message);
+};
+
+const awaitWithTimeout = async <T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> => {
+  void promise.catch(() => undefined);
+
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs} ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export class OpcUaClient {
   private client: OPCUAClient | undefined;
   private session: ClientSession | undefined;
+  private certificateManager: OPCUACertificateManager | undefined;
   private state: OpcUaClientState = 'disconnected';
   private readonly subscriptions = new Set<ClientSubscription>();
 
@@ -61,6 +105,10 @@ export class OpcUaClient {
     return this.subscriptions.size;
   }
 
+  public get certificateFile(): string | undefined {
+    return this.client?.certificateFile;
+  }
+
   public async connect(): Promise<void> {
     if (this.state !== 'disconnected') {
       throw new OpcUaClientStateError('connect', this.state);
@@ -68,33 +116,54 @@ export class OpcUaClient {
 
     this.state = 'connecting';
 
-    const client = OPCUAClient.create({
-      applicationName: 'HardwareTestingOpcUaClient',
-      connectionStrategy: {
-        initialDelay: 100,
-        maxDelay: 100,
-        maxRetry: 0,
-        randomisationFactor: 0,
-      },
-      transportTimeout: this.options.connectionTimeoutMs,
-      requestedSessionTimeout: 15_000,
-      endpointMustExist: false,
-      keepSessionAlive: false,
-      securityMode: MessageSecurityMode.None,
-      securityPolicy: SecurityPolicy.None,
-    });
-
-    this.client = client;
+    const security = this.options.security;
 
     try {
-      await client.connect(this.options.endpoint);
+      const certificateManager =
+        security === undefined ? undefined : this.requireCertificateManager(security);
+
+      const client = OPCUAClient.create({
+        applicationName: 'HardwareTestingOpcUaClient',
+        connectionStrategy: {
+          initialDelay: 100,
+          maxDelay: 100,
+          maxRetry: 0,
+          randomisationFactor: 0,
+        },
+        transportTimeout: this.options.connectionTimeoutMs,
+        requestedSessionTimeout: 15_000,
+        endpointMustExist: false,
+        keepSessionAlive: false,
+        securityMode: securityModes[security?.mode ?? 'None'],
+        securityPolicy: securityPolicies[security?.policy ?? 'None'],
+        ...(certificateManager === undefined
+          ? {}
+          : { clientCertificateManager: certificateManager }),
+      });
+
+      this.client = client;
+
+      if (certificateManager !== undefined) {
+        await certificateManager.initialize();
+        await client.createDefaultCertificate();
+      }
+
+      await awaitWithTimeout(
+        client.connect(this.options.endpoint),
+        this.options.connectionTimeoutMs,
+        `connect to ${this.options.endpoint}`,
+      );
       this.session = await client.createSession();
       this.state = 'connected';
     } catch (cause) {
-      await client.disconnect().catch(() => undefined);
+      await this.client?.disconnect().catch(() => undefined);
       this.client = undefined;
       this.session = undefined;
       this.state = 'disconnected';
+
+      if (security !== undefined && isCertificateTrustFailure(cause)) {
+        throw new OpcUaCertificateTrustError(this.options.endpoint, cause);
+      }
 
       throw new OpcUaConnectionError(this.options.endpoint, cause);
     }
@@ -313,6 +382,18 @@ export class OpcUaClient {
     if (disconnectError !== undefined) {
       throw new OpcUaDisconnectError(disconnectError);
     }
+  }
+
+  private requireCertificateManager(security: OpcUaSecurityOptions): OPCUACertificateManager {
+    this.certificateManager ??= new OPCUACertificateManager({
+      rootFolder: security.pkiRootFolder,
+      automaticallyAcceptUnknownCertificate: security.trustUnknownServerCertificate,
+      // File watchers are unnecessary for short-lived test clients and would leak
+      // five OS watch handles per OPCUACertificateManager instance.
+      disableFileWatchers: true,
+    });
+
+    return this.certificateManager;
   }
 
   private requireSession(operation: string): ClientSession {

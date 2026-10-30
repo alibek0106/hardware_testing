@@ -1,8 +1,20 @@
 export type OpcUaClientState = 'disconnected' | 'connecting' | 'connected' | 'disconnecting';
 
+export type OpcUaSecurityMode = 'None' | 'Sign' | 'SignAndEncrypt';
+
+export type OpcUaSecurityPolicy = 'None' | 'Basic256Sha256';
+
+export interface OpcUaSecurityOptions {
+  readonly mode: OpcUaSecurityMode;
+  readonly policy: OpcUaSecurityPolicy;
+  readonly pkiRootFolder: string;
+  readonly trustUnknownServerCertificate: boolean;
+}
+
 export interface OpcUaClientOptions {
   readonly endpoint: string;
   readonly connectionTimeoutMs: number;
+  readonly security?: OpcUaSecurityOptions;
 }
 
 export interface OpcUaBrowseNode {

@@ -1,51 +1,61 @@
-import { createConnection } from 'node:net';
+import { createRequire } from 'node:module';
 
-const endpoint = new URL(process.env.OPC_UA_ENDPOINT ?? 'opc.tcp://localhost:50000');
-const host = endpoint.hostname;
-const port = Number(endpoint.port);
-const deadline = Date.now() + 30_000;
+const require = createRequire(import.meta.url);
+const { MessageSecurityMode, OPCUAClient, SecurityPolicy } = require('node-opcua');
+
+const endpoints = [
+  process.env.OPC_UA_ENDPOINT ?? 'opc.tcp://localhost:50000',
+  process.env.OPC_UA_SECURE_ENDPOINT ?? 'opc.tcp://localhost:50001',
+];
+const deadline = Date.now() + 90_000;
 
 const delay = (milliseconds) =>
   new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });
 
-const canConnect = () =>
-  new Promise((resolve) => {
-    const socket = createConnection({
-      host,
-      port,
-    });
-
-    let settled = false;
-
-    const finish = (result) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      socket.destroy();
-      resolve(result);
-    };
-
-    socket.setTimeout(1_000);
-    socket.once('connect', () => finish(true));
-    socket.once('error', () => finish(false));
-    socket.once('timeout', () => finish(false));
+// A raw TCP probe is not enough: Docker's userland proxy accepts connections on the
+// published port before the OPC UA stack inside the container is actually serving.
+// GetEndpoints over an unsecured discovery channel proves the server is ready, and
+// works against the security-enabled simulator too (discovery is always plain).
+const canConnect = async (endpointUrl) => {
+  const client = OPCUAClient.create({
+    applicationName: 'OpcUaReadinessProbe',
+    connectionStrategy: {
+      initialDelay: 100,
+      maxDelay: 100,
+      maxRetry: 0,
+      randomisationFactor: 0,
+    },
+    transportTimeout: 2_000,
+    endpointMustExist: false,
+    securityMode: MessageSecurityMode.None,
+    securityPolicy: SecurityPolicy.None,
   });
 
-let ready = false;
+  try {
+    await client.connect(endpointUrl);
+    await client.getEndpoints();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await client.disconnect().catch(() => undefined);
+  }
+};
 
-while (Date.now() < deadline && !ready) {
-  ready = await canConnect();
+for (const endpointUrl of endpoints) {
+  let ready = await canConnect(endpointUrl);
+
+  while (!ready && Date.now() < deadline) {
+    await delay(500);
+    ready = await canConnect(endpointUrl);
+  }
 
   if (!ready) {
-    await delay(500);
+    process.stderr.write(`OPC UA simulator did not become available at ${endpointUrl}\n`);
+    process.exitCode = 1;
+  } else {
+    process.stdout.write(`OPC UA simulator is ready at ${endpointUrl}\n`);
   }
-}
-
-if (!ready) {
-  process.stderr.write(`OPC UA simulator did not become available at ${host}:${port}\n`);
-  process.exitCode = 1;
 }

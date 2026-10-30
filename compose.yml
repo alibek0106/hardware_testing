@@ -19,3 +19,18 @@ services:
     ports:
       - '50000:50000'
       - '8080:8080'
+
+  opcplc-secure:
+    image: mcr.microsoft.com/iotedge/opc-plc:2.12.48
+    container_name: opcplc-secure
+    command:
+      - --pn=50001
+      - --autoaccept
+      - --sn=5
+      - --sr=10
+      - --st=uint
+      - --fn=5
+      - --fr=1
+      - --ft=uint
+    ports:
+      - '50001:50001'

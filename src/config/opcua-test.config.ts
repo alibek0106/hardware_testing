@@ -1,6 +1,9 @@
 export const opcUaTestConfig = {
   endpoint: process.env.OPC_UA_ENDPOINT ?? 'opc.tcp://localhost:50000',
+  secureEndpoint: process.env.OPC_UA_SECURE_ENDPOINT ?? 'opc.tcp://localhost:50001',
   invalidEndpoint: process.env.OPC_UA_INVALID_ENDPOINT ?? 'opc.tcp://127.0.0.1:1',
+  serverTimeNodeId: 'ns=0;i=2258',
+  secureConnectionTimeoutMs: 10_000,
   connectionTimeoutMs: 3_000,
   valueChangeTimeoutMs: 8_000,
   subscriptionTimeoutMs: 8_000,

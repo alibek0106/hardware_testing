@@ -13,6 +13,13 @@ export class OpcUaConnectionError extends Error {
   }
 }
 
+export class OpcUaCertificateTrustError extends OpcUaConnectionError {
+  public constructor(endpoint: string, cause: unknown) {
+    super(endpoint, cause);
+    this.name = 'OpcUaCertificateTrustError';
+  }
+}
+
 export class OpcUaClientStateError extends Error {
   public constructor(
     public readonly operation: string,

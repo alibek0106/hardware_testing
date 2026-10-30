@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
-    "opcua:start": "docker compose up -d opcplc",
+    "opcua:start": "docker compose up -d opcplc opcplc-secure",
     "opcua:wait": "node scripts/wait-for-opcua.mjs",
     "opcua:logs": "docker compose logs opcplc",
     "opcua:stop": "docker compose down --remove-orphans",

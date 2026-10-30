@@ -113,7 +113,9 @@ export class AirQualityPage {
   }
 
   public async openInitialCityPage(): Promise<void> {
-    await this.page.goto(airQualityTestConfig.initialCityPath);
+    await this.page.goto(airQualityTestConfig.initialCityPath, {
+      waitUntil: 'domcontentloaded',
+    });
 
     await expect(this.page).toHaveURL(new RegExp(`${airQualityTestConfig.initialCityPath}$`));
 
@@ -136,7 +138,7 @@ export class AirQualityPage {
 
     await expect(this.page).toHaveURL(new RegExp(`${airQualityTestConfig.targetCityPath}$`));
 
-    await expect(this.currentAqiTitle).toContainText('London AQI');
+    await expect(this.currentAqiTitle).toContainText(airQualityTestConfig.targetCityTitle);
 
     await expect
       .poll(() => this.interceptedTelemetryRequests, {
@@ -160,21 +162,21 @@ export class AirQualityPage {
   }
 
   public async expectAqi(aqi: number): Promise<void> {
-    await expect(this.currentAqiTitle).toContainText('London AQI');
+    await expect(this.currentAqiTitle).toContainText(airQualityTestConfig.targetCityTitle);
     await expect(this.currentAqiValue).toHaveText(String(aqi));
   }
 
   public async expectAirQualityPageOperational(): Promise<void> {
     await expect(this.page).toHaveURL(new RegExp(`${airQualityTestConfig.targetCityPath}$`));
 
-    await expect(this.currentAqiTitle).toContainText('London AQI');
+    await expect(this.currentAqiTitle).toContainText(airQualityTestConfig.targetCityTitle);
     await expect(this.currentAqiValue).toBeVisible();
     await expect(this.currentAqiUpdatedTime).toBeVisible();
     await expect(this.searchTrigger).toBeVisible();
   }
 
   public async expectLastKnownTelemetryState(): Promise<void> {
-    await expect(this.currentAqiTitle).toContainText('London AQI');
+    await expect(this.currentAqiTitle).toContainText(airQualityTestConfig.targetCityTitle);
     await expect(this.currentAqiValue).toBeVisible();
     await expect(this.currentAqiUpdatedTime).toBeVisible();
     await expect(this.currentAqiUpdatedTime).toContainText(/Updated|Last Update/i);
