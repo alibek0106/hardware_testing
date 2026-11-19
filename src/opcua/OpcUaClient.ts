@@ -1,7 +1,10 @@
 import {
   AttributeIds,
+  DataChangeFilter,
+  DataChangeTrigger,
   DataType,
   type DataValue,
+  DeadbandType,
   type ClientMonitoredItemBase,
   type ClientSession,
   type ClientSubscription,
@@ -29,6 +32,7 @@ import type {
   OpcUaDataChange,
   OpcUaMethodArgument,
   OpcUaMethodCallResult,
+  OpcUaMonitorCollector,
   OpcUaMonitorOptions,
   OpcUaReadResult,
   OpcUaSecurityMode,
@@ -64,6 +68,9 @@ const securityPolicies: Record<OpcUaSecurityPolicy, SecurityPolicy> = {
   None: SecurityPolicy.None,
   Basic256Sha256: SecurityPolicy.Basic256Sha256,
 };
+
+const toError = (cause: unknown): Error =>
+  cause instanceof Error ? cause : new Error(String(cause));
 
 const isCertificateTrustFailure = (cause: unknown): boolean => {
   const message = cause instanceof Error ? cause.message : String(cause);
@@ -343,6 +350,164 @@ export class OpcUaClient {
   }
 
   /**
+   * Reads a node's full data value — value, status code and both timestamps —
+   * WITHOUT raising on a non-Good status. Use this for signal-quality analysis
+   * where Bad and Uncertain values are themselves the subject of the test;
+   * {@link requireGood} converts the result back into fail-fast semantics.
+   */
+  public async readDataValue(nodeId: string): Promise<OpcUaReadResult> {
+    const session = this.requireSession('read');
+    const dataValue = await session.read({
+      nodeId,
+      attributeId: AttributeIds.Value,
+    });
+
+    const change = this.createDataChange(nodeId, dataValue);
+
+    return {
+      nodeId: change.nodeId,
+      value: change.value,
+      dataType: change.dataType,
+      statusCode: change.statusCode,
+      isGood: change.isGood,
+      sourceTimestamp: change.sourceTimestamp,
+      serverTimestamp: change.serverTimestamp,
+    };
+  }
+
+  /**
+   * Returns the value carried by a data value whose status is Good and throws
+   * {@link OpcUaOperationError} with the status code name for Bad or Uncertain
+   * data, so a failed or degraded sensor can never be read as a plain number.
+   */
+  public requireGood(dataValue: OpcUaReadResult): unknown {
+    if (!dataValue.isGood) {
+      throw new OpcUaOperationError('requireGood', dataValue.nodeId, dataValue.statusCode);
+    }
+
+    return dataValue.value;
+  }
+
+  /**
+   * Reports whether a data value is stale: its source timestamp (the
+   * device-side stamp of the last real update, falling back to the server
+   * timestamp when absent) is older than `maxAgeMs`. A frozen sensor keeps
+   * returning the same value with a frozen source timestamp, which is exactly
+   * what this detects.
+   */
+  public isStale(dataValue: OpcUaReadResult, maxAgeMs: number): boolean {
+    const timestamp = dataValue.sourceTimestamp ?? dataValue.serverTimestamp;
+
+    if (timestamp === null) {
+      return true;
+    }
+
+    return Date.now() - timestamp.getTime() > maxAgeMs;
+  }
+
+  /**
+   * Starts monitoring a node and returns a collector whose `take(count,
+   * timeoutMs)` awaits that many consecutive data-change notifications and
+   * whose `collectDuring(windowMs)` gathers everything inside a bounded
+   * window that starts at the call — notifications buffered earlier are
+   * discarded. The monitored item's initial-value notification is discarded.
+   * `creationStatusCode` carries the server's status for creating the
+   * monitored item (relevant when a filter such as a deadband is requested).
+   * Call `stop()` to terminate the underlying subscription.
+   */
+  public async monitor(
+    nodeId: string,
+    options?: OpcUaMonitorOptions,
+  ): Promise<OpcUaMonitorCollector> {
+    const { subscription, monitoredItem } = await this.startMonitoring(nodeId, options);
+    const buffer: OpcUaDataChange[] = [];
+    const waiters = new Set<() => void>();
+    let initialNotificationSeen = false;
+    let failure: Error | undefined;
+
+    const notifyWaiters = (): void => {
+      for (const waiter of [...waiters]) {
+        waiter();
+      }
+    };
+
+    monitoredItem.on('changed', (dataValue: DataValue) => {
+      if (!initialNotificationSeen) {
+        initialNotificationSeen = true;
+        return;
+      }
+
+      buffer.push(this.createDataChange(nodeId, dataValue));
+      notifyWaiters();
+    });
+
+    monitoredItem.once('err', (error: unknown) => {
+      failure ??= toError(error);
+      notifyWaiters();
+    });
+
+    subscription.once('terminated', () => {
+      failure ??= new OpcUaSubscriptionTerminatedError(nodeId);
+      notifyWaiters();
+    });
+
+    return {
+      nodeId,
+      creationStatusCode: monitoredItem.statusCode.toString(),
+      take: (count: number, timeoutMs: number): Promise<OpcUaDataChange[]> =>
+        new Promise<OpcUaDataChange[]>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            waiters.delete(check);
+            reject(new OpcUaSubscriptionTimeoutError(nodeId, timeoutMs));
+          }, timeoutMs);
+
+          const check = (): void => {
+            if (failure !== undefined) {
+              clearTimeout(timer);
+              waiters.delete(check);
+              reject(failure);
+              return;
+            }
+
+            if (buffer.length >= count) {
+              clearTimeout(timer);
+              waiters.delete(check);
+              resolve(buffer.splice(0, count));
+            }
+          };
+
+          waiters.add(check);
+          check();
+        }),
+      collectDuring: (windowMs: number): Promise<OpcUaDataChange[]> =>
+        new Promise<OpcUaDataChange[]>((resolve, reject) => {
+          // The window starts NOW: notifications buffered before this call
+          // belong to no window and must not skew the collection.
+          buffer.length = 0;
+
+          const timer = setTimeout(() => {
+            waiters.delete(failFast);
+            resolve(buffer.splice(0, buffer.length));
+          }, windowMs);
+
+          const failFast = (): void => {
+            if (failure !== undefined) {
+              clearTimeout(timer);
+              waiters.delete(failFast);
+              reject(failure);
+            }
+          };
+
+          waiters.add(failFast);
+          failFast();
+        }),
+      stop: async (): Promise<void> => {
+        await subscription.terminate().catch(() => undefined);
+      },
+    };
+  }
+
+  /**
    * Calls an OPC UA method on its parent object and returns the call outcome.
    * A non-Good call status is raised as {@link OpcUaOperationError} carrying the
    * status code name, never returned silently.
@@ -410,9 +575,9 @@ export class OpcUaClient {
           changes.push(this.createDataChange(nodeId, dataValue));
         };
 
-        const handleError = (error: Error): void => {
+        const handleError = (error: unknown): void => {
           cleanup();
-          reject(error);
+          reject(toError(error));
         };
 
         const handleTerminated = (): void => {
@@ -475,9 +640,9 @@ export class OpcUaClient {
           }
         };
 
-        const handleError = (error: Error): void => {
+        const handleError = (error: unknown): void => {
           cleanup();
-          reject(error);
+          reject(toError(error));
         };
 
         const handleTerminated = (): void => {
@@ -639,10 +804,31 @@ export class OpcUaClient {
         samplingInterval: options?.samplingIntervalMs ?? 50,
         discardOldest: true,
         queueSize: options?.queueSize ?? 100,
+        ...(options?.deadbandAbsolute === undefined
+          ? {}
+          : {
+              filter: new DataChangeFilter({
+                trigger: DataChangeTrigger.StatusValue,
+                deadbandType: DeadbandType.Absolute,
+                deadbandValue: options.deadbandAbsolute,
+              }),
+            }),
       },
       TimestampsToReturn.Both,
       MonitoringMode.Reporting,
     );
+
+    // node-opcua resolves monitor() even when the per-item creation result is
+    // Bad (the item just emits 'err'/'terminated' before the promise settles),
+    // so the status must be checked here or a failed item would silently
+    // deliver nothing for the whole collection window.
+    if (!monitoredItem.statusCode.isGood()) {
+      const creationStatusCode = monitoredItem.statusCode.toString();
+
+      await subscription.terminate().catch(() => undefined);
+
+      throw new OpcUaOperationError('monitor', nodeId, creationStatusCode);
+    }
 
     return {
       subscription,
@@ -652,11 +838,17 @@ export class OpcUaClient {
 
   private createDataChange(nodeId: string, dataValue: DataValue): OpcUaDataChange {
     const statusCode = dataValue.statusCode.toString();
-    const dataType = DataType[dataValue.value.dataType] ?? String(dataValue.value.dataType);
+    // A server may omit the variant entirely on a Bad-quality value, so the
+    // mapping must never dereference it unconditionally.
+    const variant = dataValue.value as DataValue['value'] | null | undefined;
+    const dataType =
+      variant === null || variant === undefined
+        ? 'Null'
+        : (DataType[variant.dataType] ?? String(variant.dataType));
 
     return {
       nodeId,
-      value: dataValue.value.value as unknown,
+      value: variant?.value as unknown,
       dataType,
       statusCode,
       isGood: dataValue.statusCode.isGood(),

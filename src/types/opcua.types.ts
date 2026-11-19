@@ -30,6 +30,15 @@ export interface OpcUaMonitorOptions {
   readonly samplingIntervalMs?: number;
   readonly publishingIntervalMs?: number;
   readonly queueSize?: number;
+  readonly deadbandAbsolute?: number;
+}
+
+export interface OpcUaMonitorCollector {
+  readonly nodeId: string;
+  readonly creationStatusCode: string;
+  take(count: number, timeoutMs: number): Promise<OpcUaDataChange[]>;
+  collectDuring(windowMs: number): Promise<OpcUaDataChange[]>;
+  stop(): Promise<void>;
 }
 
 export interface OpcUaReadResult {

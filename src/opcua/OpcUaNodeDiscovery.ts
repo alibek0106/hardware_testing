@@ -8,6 +8,13 @@ export interface FastTelemetryDiscovery {
   readonly relevantNodes: readonly OpcUaBrowseNode[];
 }
 
+export interface SignalQualityDiscovery {
+  readonly fastNode: OpcUaBrowseNode;
+  readonly statusCycleNode: OpcUaBrowseNode;
+  readonly spikeNode: OpcUaBrowseNode;
+  readonly dipNode: OpcUaBrowseNode;
+}
+
 export type DeviceCommandMethodKey = keyof typeof opcUaTestConfig.deviceCommandMethodBrowseNames;
 
 export interface DeviceCommandDiscovery {
@@ -98,6 +105,52 @@ export const discoverDeviceCommandNodes = async (
     fastNode,
     methods,
     relevantNodes: [opcPlcNode, methodsNode, stepUpNode, fastNode, ...Object.values(methods)],
+  };
+};
+
+/**
+ * Locates the signal-quality telemetry nodes — a plain fast node, the
+ * status-cycling fast node and the spike/dip anomaly signals — by browsing
+ * down from the Objects folder, so no namespace index is ever hard-coded.
+ */
+export const discoverSignalQualityNodes = async (
+  client: OpcUaClient,
+): Promise<SignalQualityDiscovery> => {
+  const opcPlcNode = await client.findNodeByBrowseName(
+    opcUaTestConfig.objectsFolderNodeId,
+    opcUaTestConfig.opcPlcBrowseName,
+    opcUaTestConfig.browseMaxDepth,
+  );
+
+  const discoveredNodes = await client.browseRecursively(
+    opcPlcNode.nodeId,
+    opcUaTestConfig.browseMaxDepth,
+  );
+
+  const requireVariable = (predicate: (node: OpcUaBrowseNode) => boolean, label: string) =>
+    requireDiscoveredNode(
+      discoveredNodes,
+      (node) => node.nodeClass === 'Variable' && predicate(node),
+      label,
+    );
+
+  return {
+    fastNode: requireVariable(
+      (node) => opcUaTestConfig.fastNodeNamePattern.test(node.browseName),
+      opcUaTestConfig.fastNodeNamePattern.source,
+    ),
+    statusCycleNode: requireVariable(
+      (node) => opcUaTestConfig.statusCycleNodePattern.test(node.browseName),
+      opcUaTestConfig.statusCycleNodePattern.source,
+    ),
+    spikeNode: requireVariable(
+      (node) => node.browseName === opcUaTestConfig.spikeNodeBrowseName,
+      opcUaTestConfig.spikeNodeBrowseName,
+    ),
+    dipNode: requireVariable(
+      (node) => node.browseName === opcUaTestConfig.dipNodeBrowseName,
+      opcUaTestConfig.dipNodeBrowseName,
+    ),
   };
 };
 
