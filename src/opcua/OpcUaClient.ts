@@ -2,6 +2,7 @@ import {
   AttributeIds,
   DataType,
   type DataValue,
+  type ClientMonitoredItemBase,
   type ClientSession,
   type ClientSubscription,
   MessageSecurityMode,
@@ -26,6 +27,9 @@ import type {
   OpcUaClientOptions,
   OpcUaClientState,
   OpcUaDataChange,
+  OpcUaMethodArgument,
+  OpcUaMethodCallResult,
+  OpcUaMonitorOptions,
   OpcUaReadResult,
   OpcUaSecurityMode,
   OpcUaSecurityOptions,
@@ -188,9 +192,66 @@ export class OpcUaClient {
         browseName,
         displayName,
         nodeClass,
+        parentNodeId: nodeId,
         path: [displayName],
       };
     });
+  }
+
+  /**
+   * Finds the first node with the given browse name below a starting node using
+   * breadth-first browsing, so no namespace index has to be hard-coded.
+   * Throws {@link OpcUaOperationError} with status `NodeNotFound` when nothing matches.
+   */
+  public async findNodeByBrowseName(
+    startNodeId: string,
+    browseName: string,
+    maxDepth: number,
+  ): Promise<OpcUaBrowseNode> {
+    const visitedNodeIds = new Set<string>([startNodeId]);
+    const queue: BrowseQueueEntry[] = [
+      {
+        nodeId: startNodeId,
+        depth: 0,
+        path: [],
+      },
+    ];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+
+      if (current === undefined) {
+        break;
+      }
+
+      const children = await this.browse(current.nodeId);
+
+      for (const child of children) {
+        const path = [...current.path, child.displayName];
+
+        if (child.browseName === browseName) {
+          return {
+            ...child,
+            path,
+          };
+        }
+
+        if (
+          current.depth < maxDepth &&
+          child.nodeClass !== 'Variable' &&
+          !visitedNodeIds.has(child.nodeId)
+        ) {
+          visitedNodeIds.add(child.nodeId);
+          queue.push({
+            nodeId: child.nodeId,
+            depth: current.depth + 1,
+            path,
+          });
+        }
+      }
+    }
+
+    throw new OpcUaOperationError('find', `${browseName} below ${startNodeId}`, 'NodeNotFound');
   }
 
   public async browseRecursively(rootNodeId: string, maxDepth: number): Promise<OpcUaBrowseNode[]> {
@@ -279,6 +340,167 @@ export class OpcUaClient {
       statusCode,
       isGood: true,
     };
+  }
+
+  /**
+   * Calls an OPC UA method on its parent object and returns the call outcome.
+   * A non-Good call status is raised as {@link OpcUaOperationError} carrying the
+   * status code name, never returned silently.
+   */
+  public async callMethod(
+    objectNodeId: string,
+    methodNodeId: string,
+    inputArguments: readonly OpcUaMethodArgument[] = [],
+  ): Promise<OpcUaMethodCallResult> {
+    const session = this.requireSession('call');
+
+    const result = await session.call({
+      objectId: objectNodeId,
+      methodId: methodNodeId,
+      inputArguments: inputArguments.map((argument) => ({
+        dataType: writeDataTypes[argument.dataType],
+        value: argument.value,
+      })),
+    });
+
+    const statusCode = result.statusCode.toString();
+
+    if (!result.statusCode.isGood()) {
+      throw new OpcUaOperationError('call', `${methodNodeId} on ${objectNodeId}`, statusCode);
+    }
+
+    return {
+      objectNodeId,
+      methodNodeId,
+      statusCode,
+      isGood: true,
+      outputArguments: (result.outputArguments ?? []).map((output) => output.value as unknown),
+    };
+  }
+
+  /**
+   * Collects every data-change notification for a node inside a bounded
+   * observation window. The monitored item's initial-value notification is
+   * discarded, so a node that does not change yields an empty array — this is
+   * the helper for proving that something does NOT happen.
+   */
+  public async collectChanges(
+    nodeId: string,
+    windowMs: number,
+    options?: OpcUaMonitorOptions,
+  ): Promise<OpcUaDataChange[]> {
+    const { subscription, monitoredItem } = await this.startMonitoring(nodeId, options);
+    const changes: OpcUaDataChange[] = [];
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let initialNotificationSeen = false;
+
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve();
+        }, windowMs);
+
+        const handleChanged = (dataValue: DataValue): void => {
+          if (!initialNotificationSeen) {
+            initialNotificationSeen = true;
+            return;
+          }
+
+          changes.push(this.createDataChange(nodeId, dataValue));
+        };
+
+        const handleError = (error: Error): void => {
+          cleanup();
+          reject(error);
+        };
+
+        const handleTerminated = (): void => {
+          cleanup();
+          reject(new OpcUaSubscriptionTerminatedError(nodeId));
+        };
+
+        const cleanup = (): void => {
+          clearTimeout(timer);
+          monitoredItem.removeListener('changed', handleChanged);
+          monitoredItem.removeListener('err', handleError);
+          subscription.removeListener('terminated', handleTerminated);
+        };
+
+        monitoredItem.on('changed', handleChanged);
+        monitoredItem.once('err', handleError);
+        subscription.once('terminated', handleTerminated);
+      });
+    } finally {
+      await subscription.terminate().catch(() => undefined);
+    }
+
+    return changes;
+  }
+
+  /**
+   * Collects a fixed number of consecutive data-change notifications for a node.
+   * The monitored item's initial-value notification is discarded. Throws
+   * {@link OpcUaSubscriptionTimeoutError} when the count is not reached in time.
+   */
+  public async collectNotifications(
+    nodeId: string,
+    count: number,
+    timeoutMs: number,
+    options?: OpcUaMonitorOptions,
+  ): Promise<OpcUaDataChange[]> {
+    const { subscription, monitoredItem } = await this.startMonitoring(nodeId, options);
+    const notifications: OpcUaDataChange[] = [];
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let initialNotificationSeen = false;
+
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new OpcUaSubscriptionTimeoutError(nodeId, timeoutMs));
+        }, timeoutMs);
+
+        const handleChanged = (dataValue: DataValue): void => {
+          if (!initialNotificationSeen) {
+            initialNotificationSeen = true;
+            return;
+          }
+
+          notifications.push(this.createDataChange(nodeId, dataValue));
+
+          if (notifications.length >= count) {
+            cleanup();
+            resolve();
+          }
+        };
+
+        const handleError = (error: Error): void => {
+          cleanup();
+          reject(error);
+        };
+
+        const handleTerminated = (): void => {
+          cleanup();
+          reject(new OpcUaSubscriptionTerminatedError(nodeId));
+        };
+
+        const cleanup = (): void => {
+          clearTimeout(timer);
+          monitoredItem.removeListener('changed', handleChanged);
+          monitoredItem.removeListener('err', handleError);
+          subscription.removeListener('terminated', handleTerminated);
+        };
+
+        monitoredItem.on('changed', handleChanged);
+        monitoredItem.once('err', handleError);
+        subscription.once('terminated', handleTerminated);
+      });
+    } finally {
+      await subscription.terminate().catch(() => undefined);
+    }
+
+    return notifications;
   }
 
   public async subscribeToNode(nodeId: string, timeoutMs: number): Promise<OpcUaDataChange> {
@@ -382,6 +604,66 @@ export class OpcUaClient {
     if (disconnectError !== undefined) {
       throw new OpcUaDisconnectError(disconnectError);
     }
+  }
+
+  private async startMonitoring(
+    nodeId: string,
+    options?: OpcUaMonitorOptions,
+  ): Promise<{
+    subscription: ClientSubscription;
+    monitoredItem: ClientMonitoredItemBase;
+  }> {
+    const session = this.requireSession('monitor');
+
+    const subscription = await session.createSubscription2({
+      requestedPublishingInterval: options?.publishingIntervalMs ?? 100,
+      requestedLifetimeCount: 600,
+      requestedMaxKeepAliveCount: 10,
+      maxNotificationsPerPublish: 100,
+      publishingEnabled: true,
+      priority: 1,
+    });
+
+    this.subscriptions.add(subscription);
+
+    subscription.once('terminated', () => {
+      this.subscriptions.delete(subscription);
+    });
+
+    const monitoredItem = await subscription.monitor(
+      {
+        nodeId,
+        attributeId: AttributeIds.Value,
+      },
+      {
+        samplingInterval: options?.samplingIntervalMs ?? 50,
+        discardOldest: true,
+        queueSize: options?.queueSize ?? 100,
+      },
+      TimestampsToReturn.Both,
+      MonitoringMode.Reporting,
+    );
+
+    return {
+      subscription,
+      monitoredItem,
+    };
+  }
+
+  private createDataChange(nodeId: string, dataValue: DataValue): OpcUaDataChange {
+    const statusCode = dataValue.statusCode.toString();
+    const dataType = DataType[dataValue.value.dataType] ?? String(dataValue.value.dataType);
+
+    return {
+      nodeId,
+      value: dataValue.value.value as unknown,
+      dataType,
+      statusCode,
+      isGood: dataValue.statusCode.isGood(),
+      sourceTimestamp: dataValue.sourceTimestamp,
+      serverTimestamp: dataValue.serverTimestamp,
+      receivedAt: new Date(),
+    };
   }
 
   private requireCertificateManager(security: OpcUaSecurityOptions): OPCUACertificateManager {

@@ -22,7 +22,14 @@ export interface OpcUaBrowseNode {
   readonly browseName: string;
   readonly displayName: string;
   readonly nodeClass: string;
+  readonly parentNodeId: string;
   readonly path: readonly string[];
+}
+
+export interface OpcUaMonitorOptions {
+  readonly samplingIntervalMs?: number;
+  readonly publishingIntervalMs?: number;
+  readonly queueSize?: number;
 }
 
 export interface OpcUaReadResult {
@@ -47,4 +54,17 @@ export interface OpcUaWriteResult {
   readonly nodeId: string;
   readonly statusCode: string;
   readonly isGood: boolean;
+}
+
+export interface OpcUaMethodArgument {
+  readonly dataType: OpcUaWriteDataType;
+  readonly value: OpcUaWriteValue;
+}
+
+export interface OpcUaMethodCallResult {
+  readonly objectNodeId: string;
+  readonly methodNodeId: string;
+  readonly statusCode: string;
+  readonly isGood: boolean;
+  readonly outputArguments: readonly unknown[];
 }

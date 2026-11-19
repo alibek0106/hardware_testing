@@ -6,6 +6,7 @@ services:
       - --pn=50000
       - --autoaccept
       - --unsecuretransport
+      - --sph
       - --sn=5
       - --sr=10
       - --st=uint
