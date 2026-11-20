@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tank Operator Panel</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 2rem;
+        max-width: 40rem;
+      }
+      .banner {
+        padding: 0.5rem 1rem;
+        margin-bottom: 1rem;
+        border-radius: 0.25rem;
+        font-weight: 600;
+      }
+      #fault-banner {
+        background: #fdd;
+        border: 1px solid #c00;
+      }
+      #connection-banner {
+        background: #ffe9c7;
+        border: 1px solid #c70;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: 12rem 1fr;
+        gap: 0.25rem 1rem;
+      }
+      dt {
+        font-weight: 600;
+      }
+      #message-area {
+        min-height: 1.5rem;
+        color: #a00;
+        margin-top: 1rem;
+      }
+      fieldset {
+        margin-top: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Tank Operator Panel</h1>
+
+    <div id="fault-banner" class="banner" hidden>Level sensor fault — reading unavailable</div>
+    <div id="connection-banner" class="banner" hidden>
+      Connection to the gateway lost — values are not live
+    </div>
+
+    <dl>
+      <dt>Level (%)</dt>
+      <dd id="level-value">—</dd>
+      <dt>Temperature (°C)</dt>
+      <dd id="temperature-value">—</dd>
+      <dt>Setpoint (°C)</dt>
+      <dd id="setpoint-value">—</dd>
+      <dt>Pump</dt>
+      <dd id="pump-state">—</dd>
+      <dt>Interlock</dt>
+      <dd id="interlock-state">—</dd>
+    </dl>
+
+    <fieldset>
+      <legend>Pump</legend>
+      <button id="start-button" type="button">Start</button>
+      <button id="stop-button" type="button">Stop</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Temperature setpoint</legend>
+      <label for="setpoint-input">New setpoint</label>
+      <input id="setpoint-input" type="text" />
+      <button id="apply-button" type="button">Apply</button>
+    </fieldset>
+
+    <div id="message-area" role="status"></div>
+
+    <script>
+      const POLL_INTERVAL_MS = 1000;
+
+      const byId = (id) => document.getElementById(id);
+      const telemetryIds = [
+        'level-value',
+        'temperature-value',
+        'setpoint-value',
+        'pump-state',
+        'interlock-state',
+      ];
+
+      const showConnectionLost = () => {
+        byId('connection-banner').hidden = false;
+        byId('fault-banner').hidden = true;
+        // Never present the last known values as if they were live.
+        for (const id of telemetryIds) {
+          byId(id).textContent = '—';
+        }
+      };
+
+      const render = (tank) => {
+        byId('connection-banner').hidden = true;
+
+        const levelFaulty = tank.levelQuality !== 'Good';
+
+        byId('fault-banner').hidden = !levelFaulty;
+        byId('level-value').textContent = levelFaulty ? 'FAULT' : tank.level.toFixed(1);
+        byId('temperature-value').textContent = tank.temperature.toFixed(1);
+        byId('setpoint-value').textContent = tank.setpoint.toFixed(1);
+        byId('pump-state').textContent = tank.pumpRunning ? 'Running' : 'Stopped';
+        byId('interlock-state').textContent = tank.interlockTripped ? 'Tripped' : 'Clear';
+      };
+
+      const poll = async () => {
+        try {
+          const response = await fetch('/api/tank');
+
+          if (!response.ok) {
+            showConnectionLost();
+            return;
+          }
+
+          render(await response.json());
+        } catch {
+          showConnectionLost();
+        }
+      };
+
+      const command = async (url, body) => {
+        try {
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const result = await response.json();
+
+          byId('message-area').textContent = response.ok ? '' : 'Refused: ' + result.status;
+        } catch {
+          byId('message-area').textContent = 'Command failed: gateway unreachable';
+        }
+      };
+
+      byId('start-button').addEventListener('click', () =>
+        command('/api/pump', { action: 'start' }),
+      );
+      byId('stop-button').addEventListener('click', () => command('/api/pump', { action: 'stop' }));
+      byId('apply-button').addEventListener('click', () => {
+        // Deliberately no validation here: the raw input goes to the device,
+        // which is the only place safety rules live.
+        const raw = byId('setpoint-input').value;
+        const numeric = Number(raw);
+
+        command('/api/setpoint', { value: raw !== '' && Number.isFinite(numeric) ? numeric : raw });
+      });
+
+      poll();
+      setInterval(poll, POLL_INTERVAL_MS);
+    </script>
+  </body>
+</html>

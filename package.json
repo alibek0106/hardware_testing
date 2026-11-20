@@ -9,6 +9,7 @@
     "test:aqi": "playwright test --project=ui-aqicn",
     "test:api": "playwright test --project=api",
     "test:opcua": "playwright test --project=opcua",
+    "test:tank": "playwright test --project=tank",
     "test:headed": "playwright test --project=ui-chromium --headed",
     "test:debug": "playwright test --project=ui-chromium --debug",
     "report": "playwright show-report",

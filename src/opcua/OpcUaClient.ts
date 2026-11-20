@@ -72,6 +72,10 @@ const securityPolicies: Record<OpcUaSecurityPolicy, SecurityPolicy> = {
 const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error(String(cause));
 
+// Server_NamespaceArray — fixed by the OPC UA specification in namespace 0,
+// identical on every server, and therefore safe to reference by node id.
+const namespaceArrayNodeId = 'ns=0;i=2255';
+
 const isCertificateTrustFailure = (cause: unknown): boolean => {
   const message = cause instanceof Error ? cause.message : String(cause);
 
@@ -141,10 +145,17 @@ export class OpcUaClient {
           maxRetry: 0,
           randomisationFactor: 0,
         },
-        transportTimeout: this.options.connectionTimeoutMs,
+        // transportTimeout is the SOCKET INACTIVITY timeout, not a connect
+        // bound (connect is raced against connectionTimeoutMs below) — it must
+        // comfortably exceed any stretch where a test leaves the session idle,
+        // e.g. while watching the UI converge.
+        transportTimeout: 120_000,
         requestedSessionTimeout: 15_000,
         endpointMustExist: false,
-        keepSessionAlive: false,
+        // Keep-alive pings keep both the session and the transport alive
+        // through idle stretches; without them the server reaps the session
+        // after requestedSessionTimeout of inactivity.
+        keepSessionAlive: true,
         securityMode: securityModes[security?.mode ?? 'None'],
         securityPolicy: securityPolicies[security?.policy ?? 'None'],
         ...(certificateManager === undefined
@@ -373,6 +384,31 @@ export class OpcUaClient {
       sourceTimestamp: change.sourceTimestamp,
       serverTimestamp: change.serverTimestamp,
     };
+  }
+
+  /**
+   * Resolves a namespace URI to its index by reading the server's
+   * NamespaceArray at call time, so node ids never need a hard-coded
+   * namespace index that could change between server versions.
+   */
+  public async resolveNamespaceIndex(namespaceUri: string): Promise<number> {
+    const namespaceArray = await this.readNode(namespaceArrayNodeId);
+    const namespaces = namespaceArray.value;
+
+    if (
+      !Array.isArray(namespaces) ||
+      !namespaces.every((uri): uri is string => typeof uri === 'string')
+    ) {
+      throw new OpcUaOperationError('resolveNamespace', namespaceArrayNodeId, 'BadTypeMismatch');
+    }
+
+    const index = namespaces.indexOf(namespaceUri);
+
+    if (index < 0) {
+      throw new OpcUaOperationError('resolveNamespace', namespaceUri, 'NamespaceNotFound');
+    }
+
+    return index;
   }
 
   /**

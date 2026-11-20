@@ -1,5 +1,66 @@
 # NOTES
 
+## Task 3 — Integration: simulated device, safety limits and operator panel
+
+The rig has three parts, all small and fixture-grade, started automatically by Playwright's
+`webServer` so `npx playwright test` is the only command needed:
+
+| Part           | File                                                                                                                       | Address                    |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Tank simulator | [rig/tank-simulator.mjs](rig/tank-simulator.mjs) (`node-opcua` server, namespace `urn:practice:tank`)                      | `opc.tcp://localhost:4840` |
+| Gateway        | [rig/tank-gateway.mjs](rig/tank-gateway.mjs) (plain `node:http`, no frameworks)                                            | `http://localhost:3000`    |
+| Operator panel | [rig/operator-panel.html](rig/operator-panel.html) (static page served by the gateway, polls `GET /api/tank` every second) | `http://localhost:3000/`   |
+
+Ports are overridable: the `webServer` readiness probes follow `TANK_OPC_PORT` and
+`TANK_GATEWAY_URL`, so a full OPC port override needs `TANK_OPC_PORT` (rig + probe) together
+with `TANK_OPC_UA_ENDPOINT` (gateway + tests), and a gateway move needs `TANK_GATEWAY_PORT`
+(rig) together with `TANK_GATEWAY_URL` (probe + tests). The gateway exposes `/healthz`, which
+turns 200 only after its OPC UA session to the simulator is established — that is the
+`webServer` readiness URL, so start order can never race.
+
+Trade-off, stated deliberately: Playwright's `webServer` is config-global, so **every**
+`playwright test` invocation — including the UI/API/OPC UA projects and their CI jobs — boots
+the rig (two node processes, ~1–4 s). The task prescribes the `webServer` wiring so that
+`npx playwright test` is the only command needed; the cost is that an occupied port 4840/3000
+would fail unrelated runs. Playwright offers no per-project `webServer`.
+
+**The device is the only safety authority.** The setpoint range check (20–80 →
+`BadOutOfRange`), the start-pump guard (`BadInvalidState` below level 10) and the interlock
+(level < 10 while running stops the pump within 500 ms on a 100 ms check grid) all live in the
+simulator's write/method handlers. The gateway passes every request through untouched — a
+non-numeric setpoint is forwarded as a string so the _device_ answers `BadTypeMismatch` — and
+reports the device's status code name; the panel displays it and validates nothing.
+
+Namespace handling: specs never contain an `ns=` literal. The wrapper's
+`resolveNamespaceIndex()` reads the server's NamespaceArray at connect time and
+[TankNodes.ts](src/opcua/TankNodes.ts) builds all node ids from the resolved index of
+`urn:practice:tank`.
+
+Tolerances and margins (stated, with sources):
+
+- **Control response:** temperature moves at 5 °C/s in 200 ms steps (simulator behaviour), so
+  20 → 60 °C is nominally 8 s; the poll timeout is **12 s** (nominal + 4 s margin for step
+  quantisation and scheduling). Tolerance **± 0.5 °C** per the task. Overshoot is asserted
+  against every sampled approach value, and the hold check combines a bounded 2 s
+  `collectChanges()` window with a final read (a converged value stops producing data changes,
+  so the window alone could be vacuously empty).
+- **Interlock:** the device acts within 500 ms; the poll timeout is **1.5 s** (500 ms + 1 s
+  margin for the check grid and client read latency). No stop command is ever sent by the test.
+- **Panel reflections:** the panel polls once per second, so UI assertions use a **10 s**
+  auto-retry budget (several poll cycles).
+- Setpoint read-backs use `toBeCloseTo(…, 6)` — commanded Double values, not measured analog
+  ones, but exact float equality is avoided on principle.
+
+Device state isolation: the `tankDevice` fixture calls the `Simulation/Reset()` hook before
+**and** after every test (teardown also on failure), so each spec starts from the documented
+start values regardless of order or earlier crashes — every tank test, including the
+connection-lost one, requests this fixture. The `tank` project runs under the global
+`workers: 1` configuration.
+
+Evidence: device-commanding tests attach their samples, command logs and device-state
+read-backs in `finally` blocks, so the Playwright report carries the evidence on failed runs
+too — a convergence timeout still leaves the full approach-sample trace to diagnose.
+
 ## Task 2 — Signal quality (status codes, timestamps and anomaly detection)
 
 Spec: [tests/opcua/signal-quality.spec.ts](tests/opcua/signal-quality.spec.ts) plus the
