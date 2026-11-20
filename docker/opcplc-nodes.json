@@ -1,0 +1,13 @@
+{
+  "Folder": "HardwareTesting",
+  "NodeList": [
+    {
+      "NodeId": "HardwareCommandValue",
+      "Name": "HardwareCommandValue",
+      "DataType": "UInt32",
+      "ValueRank": -1,
+      "AccessLevel": "CurrentReadOrWrite",
+      "Description": "Writable hardware command value used by the automation suite"
+    }
+  ]
+}
